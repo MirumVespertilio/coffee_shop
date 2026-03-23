@@ -95,6 +95,7 @@ coffee_shop/
     ├── __init__.py
     ├── validators.py               # Функции валидации
     └── constants.py                # Константы приложения
+```
 
 
 ## Сущности
