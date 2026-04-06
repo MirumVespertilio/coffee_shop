@@ -1,19 +1,13 @@
 """Презентер для управления напитками."""
 
-from model.drink import Drink, DrinkSize
+from model.drink import Drink, DrinkSize, DrinkValidationError
+from model.category import Category, CategoryValidationError
 from repository.interfaces import ICategoryRepository, IDrinkRepository
 from view.interfaces import IDrinkView
-from utils.validators import (
-    validate_drink_name,
-    validate_drink_price,
-    validate_drink_size,
-    validate_category_id,
-    validate_category_name,
-)
 
 
 class DrinkPresenter:
-    """Связывает IDrinkView с репозиториями. Содержит бизнес-логику напитков."""
+    """Связывает IDrinkView с репозиториями. Координирует действия между слоями."""
 
     def __init__(
         self,
@@ -75,24 +69,35 @@ class DrinkPresenter:
         self, name: str, category_id: str, size: str, price_str: str, available: bool
     ) -> bool:
         """Добавить напиток. Возвращает True при успехе."""
-        errors = self._validate_drink_fields(name, category_id, size, price_str)
-        if errors:
-            self._view.show_error("\n".join(errors))
+        # Базовая проверка на пустоту категории (UI-валидация)
+        if not category_id:
+            self._view.show_error("Выберите категорию")
+            return False
+
+        # Преобразование цены (логика представления)
+        try:
+            price = round(float(price_str.strip()), 2)
+        except ValueError:
+            self._view.show_error("Цена должна быть числом")
             return False
 
         try:
+            # Создание напитка
             drink = Drink(
                 name=name.strip(),
                 category_id=category_id,
                 size=DrinkSize(size),
-                price=round(float(price_str.strip()), 2),
+                price=price,
                 available=available,
             )
             self._drink_repo.add(drink)
             self.load_drinks()
-            # Возвращаем True — диалог закроется, затем покажем сообщение
             self._view.show_success(f"Напиток «{drink.name}» добавлен")
             return True
+        except DrinkValidationError as e:
+            # Ошибка валидации модели
+            self._view.show_error(str(e))
+            return False
         except IOError as e:
             self._view.show_error(str(e))
             return False
@@ -107,24 +112,36 @@ class DrinkPresenter:
         available: bool,
     ) -> bool:
         """Обновить напиток. Возвращает True при успехе."""
-        errors = self._validate_drink_fields(name, category_id, size, price_str)
-        if errors:
-            self._view.show_error("\n".join(errors))
+        # Базовая проверка на пустоту категории (UI-валидация)
+        if not category_id:
+            self._view.show_error("Выберите категорию")
+            return False
+
+        # Преобразование цены (логика представления)
+        try:
+            price = round(float(price_str.strip()), 2)
+        except ValueError:
+            self._view.show_error("Цена должна быть числом")
             return False
 
         try:
+            # Создание напитка
             drink = Drink(
                 id=drink_id,
                 name=name.strip(),
                 category_id=category_id,
                 size=DrinkSize(size),
-                price=round(float(price_str.strip()), 2),
+                price=price,
                 available=available,
             )
             self._drink_repo.update(drink)
             self.load_drinks()
             self._view.show_success(f"Напиток «{drink.name}» обновлён")
             return True
+        except DrinkValidationError as e:
+            # Ошибка валидации модели
+            self._view.show_error(str(e))
+            return False
         except IOError as e:
             self._view.show_error(str(e))
             return False
@@ -152,20 +169,23 @@ class DrinkPresenter:
 
     def add_category(self, name: str) -> bool:
         """Добавить новую категорию. Возвращает True при успехе."""
+        # Проверка уникальности
         try:
             existing = self._category_repo.get_all()
-            existing_names = [c.name for c in existing]
-
-            error = validate_category_name(name, existing_names)
-            if error:
-                self._view.show_error(error)
+            existing_names = [c.name.lower() for c in existing]
+            if name.strip().lower() in existing_names:
+                self._view.show_error("Такая категория уже существует")
                 return False
 
-            from model.category import Category
+            # Создание категории
             category = Category(name=name.strip())
             self._category_repo.add(category)
             self.load_categories()
             return True
+        except CategoryValidationError as e:
+            # Ошибка валидации модели
+            self._view.show_error(str(e))
+            return False
         except IOError as e:
             self._view.show_error(str(e))
             return False
@@ -231,25 +251,7 @@ class DrinkPresenter:
         except IOError:
             return None
 
-    # --- Приватные методы ---
-
-    def _validate_drink_fields(
-        self, name: str, category_id: str, size: str, price_str: str
-    ) -> list[str]:
-        errors = []
-        err = validate_drink_name(name)
-        if err:
-            errors.append(err)
-        err = validate_category_id(category_id)
-        if err:
-            errors.append(err)
-        err = validate_drink_size(size)
-        if err:
-            errors.append(err)
-        err = validate_drink_price(price_str)
-        if err:
-            errors.append(err)
-        return errors
+    # --- Приватные методы (логика представления) ---
 
     def _apply_filters(self, drinks: list[Drink]) -> list[Drink]:
         cat_filter = self._view.get_filter_category()

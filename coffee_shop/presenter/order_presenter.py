@@ -1,14 +1,13 @@
 """Презентер для управления заказами."""
 
-from model.order import Order, OrderStatus
+from model.order import Order, OrderStatus, OrderValidationError
 from repository.interfaces import IDrinkRepository, IOrderRepository, ICategoryRepository
 from view.interfaces import IOrderView
-from utils.validators import validate_order_drinks
 from utils.constants import ORDER_STATUSES
 
 
 class OrderPresenter:
-    """Связывает IOrderView с репозиториями. Содержит бизнес-логику заказов."""
+    """Связывает IOrderView с репозиториями. Координирует действия между слоями."""
 
     def __init__(
         self,
@@ -89,13 +88,9 @@ class OrderPresenter:
 
     def create_order(self, drink_ids: list[str]) -> bool:
         """Создать новый заказ. Возвращает True при успехе."""
-        error = validate_order_drinks(drink_ids)
-        if error:
-            self._view.show_error(error)
-            return False
-
         try:
-            total = 0.0
+            # Сбор цен напитков (координация данных)
+            drink_prices: dict[str, float] = {}
             for did in drink_ids:
                 drink = self._drink_repo.get_by_id(did)
                 if not drink:
@@ -104,17 +99,22 @@ class OrderPresenter:
                 if not drink.available:
                     self._view.show_error(f"Напиток «{drink.name}» недоступен")
                     return False
-                total += drink.price
+                drink_prices[did] = drink.price
 
+            # Создание заказа — валидация и расчёт суммы происходят в модели 
             order = Order(
                 drink_ids=drink_ids,
-                total_price=round(total, 2),
+                _drink_prices=drink_prices,
             )
             self._order_repo.add(order)
             self.load_orders()
             self._view.show_success("Заказ создан")
             return True
 
+        except OrderValidationError as e:
+            # Ошибка валидации модели
+            self._view.show_error(str(e))
+            return False
         except IOError as e:
             self._view.show_error(str(e))
             return False
@@ -123,43 +123,45 @@ class OrderPresenter:
         self, order_id: str, drink_ids: list[str], status: str
     ) -> bool:
         """Обновить заказ. Возвращает True при успехе."""
-        error = validate_order_drinks(drink_ids)
-        if error:
-            self._view.show_error(error)
-            return False
-
         try:
+            # Преобразование статуса
             try:
                 new_status = OrderStatus(status)
             except ValueError:
                 self._view.show_error("Некорректный статус заказа")
                 return False
 
-            total = 0.0
+            # Сбор цен напитков
+            drink_prices: dict[str, float] = {}
             for did in drink_ids:
                 drink = self._drink_repo.get_by_id(did)
                 if not drink:
                     self._view.show_error(f"Напиток с ID {did[:8]}... не найден")
                     return False
-                total += drink.price
+                drink_prices[did] = drink.price
 
             existing = self._order_repo.get_by_id(order_id)
             if not existing:
                 self._view.show_error("Заказ не найден")
                 return False
 
+            # Создание заказа — валидация и расчёт суммы происходят в модели
             updated_order = Order(
                 id=order_id,
                 drink_ids=drink_ids,
+                _drink_prices=drink_prices,
                 created_at=existing.created_at,
                 status=new_status,
-                total_price=round(total, 2),
             )
             self._order_repo.update(updated_order)
             self.load_orders()
             self._view.show_success("Заказ обновлён")
             return True
 
+        except OrderValidationError as e:
+            # Ошибка валидации модели
+            self._view.show_error(str(e))
+            return False
         except IOError as e:
             self._view.show_error(str(e))
             return False
